@@ -4,6 +4,13 @@ ColorosDrawerHook 是一个用于 ColorOS / COUI 桌面应用抽屉分类页的 
 
 > 当前项目主要面向 ColorOS 系统桌面，推荐作用域为 `com.android.launcher`。其他系统或第三方桌面不可用。
 
+## 截图
+
+<p align="center">
+  <img src="docs/images/2.jpg" width="320" alt="分类列表界面" />
+  <img src="docs/images/1.jpg" width="320" alt="应用选择界面" />
+</p>
+
 ## 功能特性
 
 - 图形化管理桌面分类
