@@ -22,6 +22,7 @@ import android.os.Looper
 import android.os.Process
 import androidx.core.content.ContextCompat
 import org.json.JSONArray
+import java.util.IdentityHashMap
 
 
 
@@ -210,21 +211,20 @@ class XposedEntry : IXposedHookLoadPackage, IXposedHookZygoteInit {
                             orderMap = orderMap,
                             config = config
                         )
-
-
-                        val categorySequence = apps
-                            .mapNotNull {
-                                getEffectiveCategoryAlias(
-                                    appInfo = it,
-                                    config = config
-                                )
-                            }
-                            .distinct()
-                        log(
-                            "category build sequence=$categorySequence, " +
-                                    "orderMap=$orderMap"
-                        )
-
+                        if (isDebugLogEnabled()) {
+                            val categorySequence = apps
+                                .mapNotNull {
+                                    getEffectiveCategoryAlias(
+                                        appInfo = it,
+                                        config = config
+                                    )
+                                }
+                                .distinct()
+                            log(
+                                "category build sequence=$categorySequence, " +
+                                        "orderMap=$orderMap"
+                            )
+                        }
                     }
 
                     override fun afterHookedMethod(
@@ -320,46 +320,45 @@ class XposedEntry : IXposedHookLoadPackage, IXposedHookZygoteInit {
             logThrowable(it)
         }
     }
-    private fun sortAppsForCategoryBuild(apps: MutableList<Any>, orderMap: Map<String, Int>, config: DrawerConfig) {
+    private fun sortAppsForCategoryBuild(
+        apps: MutableList<Any>,
+        orderMap: Map<String, Int>,
+        config: DrawerConfig
+    ) {
         if (apps.size < 2) {
             return
         }
 
         val normalOrders = orderMap.values
             .filter { it in 0 until 200 }
+        val maxNormalOrder = normalOrders.maxOrNull() ?: 0
+        val configuredAliasOrder = config.categories
+            .map { it.alias }
+            .distinct()
+            .withIndex()
+            .associate { (index, alias) -> alias to index }
+        val orderCache = IdentityHashMap<Any, Int>(apps.size)
 
-        val maxNormalOrder =
-            normalOrders.maxOrNull() ?: 0
+        apps.forEach { appInfo ->
+            val alias = getEffectiveCategoryAlias(
+                appInfo = appInfo,
+                config = config
+            )
+            orderCache[appInfo] = resolveCategoryOrder(
+                alias = alias,
+                orderMap = orderMap,
+                configuredAliasOrder = configuredAliasOrder,
+                maxNormalOrder = maxNormalOrder
+            )
+        }
 
         /*
          * List.sortWith 在 Android/Java 中是稳定排序。
-         * 同一分类的应用比较结果为 0，
-         * 因而保持原始相对顺序。
+         * 同一分类的应用比较结果为 0，因而保持原始相对顺序。
          */
         apps.sortWith { first, second ->
-            val firstAlias = getEffectiveCategoryAlias(
-                appInfo = first,
-                config = config
-            )
-
-            val secondAlias = getEffectiveCategoryAlias(
-                appInfo = second,
-                config = config
-            )
-
-            val firstOrder = resolveCategoryOrder(
-                alias = firstAlias,
-                orderMap = orderMap,
-                config = config,
-                maxNormalOrder = maxNormalOrder
-            )
-
-            val secondOrder = resolveCategoryOrder(
-                alias = secondAlias,
-                orderMap = orderMap,
-                config = config,
-                maxNormalOrder = maxNormalOrder
-            )
+            val firstOrder = orderCache[first] ?: Int.MAX_VALUE
+            val secondOrder = orderCache[second] ?: Int.MAX_VALUE
 
             firstOrder.compareTo(secondOrder)
         }
@@ -392,36 +391,28 @@ class XposedEntry : IXposedHookLoadPackage, IXposedHookZygoteInit {
             ) as? String
         }.getOrNull()
     }
-    private fun resolveCategoryOrder(alias: String?, orderMap: Map<String, Int>, config: DrawerConfig, maxNormalOrder: Int): Int {
+    private fun resolveCategoryOrder(
+        alias: String?,
+        orderMap: Map<String, Int>,
+        configuredAliasOrder: Map<String, Int>,
+        maxNormalOrder: Int
+    ): Int {
         if (alias == null) {
             return Int.MAX_VALUE
         }
 
         val savedOrder = orderMap[alias]
 
-        /*
-         * 0～199 是正常显示顺序。
-         */
         if (savedOrder != null && savedOrder < 200) {
             return savedOrder
         }
 
-        /*
-         * 自定义分类第一次出现、还没有拖拽记录时，
-         * 稳定地放在现有分类末尾。
-         */
-        val customIndex = config.categories
-            .map { it.alias }
-            .distinct()
-            .indexOf(alias)
+        val customIndex = configuredAliasOrder[alias]
 
-        if (customIndex >= 0) {
+        if (customIndex != null) {
             return maxNormalOrder + 1 + customIndex
         }
 
-        /*
-         * ColorOS 中 200 通常表示未显示或兜底分类。
-         */
         return savedOrder ?: 200
     }
     private fun getCurrentNativeOrderMap(): Map<String, Int> {
@@ -655,6 +646,9 @@ class XposedEntry : IXposedHookLoadPackage, IXposedHookZygoteInit {
             return
         }
 
+        if (snapshot == nativeCategoryPackages && titleSnapshot == nativeCategoryAppTitles) {
+            return
+        }
         nativeCategoryPackages.clear()
         nativeCategoryPackages.putAll(snapshot)
         nativeCategoryAppTitles.clear()

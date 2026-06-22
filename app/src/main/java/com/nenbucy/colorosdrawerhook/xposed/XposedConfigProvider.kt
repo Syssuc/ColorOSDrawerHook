@@ -2,6 +2,7 @@ package com.nenbucy.colorosdrawerhook.xposed
 
 import com.nenbucy.colorosdrawerhook.ConfigStore
 import com.nenbucy.colorosdrawerhook.DrawerConfig
+import android.os.SystemClock
 import de.robv.android.xposed.XSharedPreferences
 import org.json.JSONArray
 
@@ -13,6 +14,7 @@ internal class XposedConfigProvider(
     private var cachedConfig: DrawerConfig = DrawerConfig.EMPTY
     private var cachedBaselinePackagesJson: String? = null
     private var cachedBaselinePackages: Set<String> = emptySet()
+    private var lastReloadElapsedMs: Long = 0L
 
     fun init() {
         prefs = XSharedPreferences(
@@ -38,10 +40,14 @@ internal class XposedConfigProvider(
             return parsed
         }
 
-        runCatching {
-            prefs.reload()
-        }.onFailure {
-            log("prefs.reload failed: ${it.javaClass.name}: ${it.message}")
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastReloadElapsedMs > 1_000L) {
+            runCatching {
+                prefs.reload()
+                lastReloadElapsedMs = now
+            }.onFailure {
+                log("prefs.reload failed: ${it.javaClass.name}: ${it.message}")
+            }
         }
 
         val version = prefs.getLong(ConfigStore.KEY_CONFIG_VERSION, -1L)
